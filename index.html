@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+
+<html lang="en">
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <title>Approximate Bayesian Computation - Socks</title>
+        
+        <script type="text/javascript" src="libs/jquery.min.js"></script>
+        <script type="text/javascript" src="libs/jquery.flot.min.js"></script>
+        <script type="text/javascript" src="libs/jstat.js"></script>
+        
+        <script>
+            function rnbinom(mu, size) {
+                return jStat.poisson.sample(jStat.gamma.sample(size, mu/size));
+            }
+            
+            function rbeta(shape1, shape2) {
+                return jStat.beta.sample(shape1, shape2); //(alpha, beta)
+            }
+            
+            function sample(arr, n) {
+                var collection = arr.slice();
+                var samp = [];
+                var len = Math.min(n, collection.length);
+                for (var i=0; i<len; i++) {
+                    samp.push( collection.splice(Math.floor(Math.random()*collection.length),1)[0] );
+                }
+                return samp;
+            }
+            
+            function pairsUnique(collection) {
+                //var collection = arr.slice();
+                function onlyUnique(value, index, self) { 
+                    return self.indexOf(value) === index;
+                }
+                var unique = collection.filter( onlyUnique );
+                var counts = [];
+                for (var i=0;i<unique.length;i++) {
+                    var hits = 0;
+                    for (var j=0;j<collection.length;j++) {
+                        if (collection[j] == unique[i]) hits++;
+                    }
+                    counts[i] = hits;
+                }
+                
+                var res = {};
+                res.unique = counts.reduce(function(n, val) {
+                    return n + (val === 1);
+                }, 0);
+                res.pairs = counts.reduce(function(n, val) {
+                    return n + (val === 2);
+                }, 0);
+                
+                return res;
+            }
+            
+            function histogram_counts(x, breaks) {
+                var min = jStat.min(x)
+                var max = jStat.max(x)
+                var bins = []
+                for(var i =0; i < breaks; i++) {bins.push([min + i/(breaks) * (max - min) + (max - min) / breaks / 2, 0])}
+                for(var i = 0; i < x.length; i++) {
+                    bin_i = Math.floor((x[i] - min) / (max - min) * breaks)
+                    if(isNaN(bin_i)) {bin_i = 0}
+                    if(bin_i > breaks - 1) {bin_i = breaks - 1}
+                    if(bin_i < 0) {bin_i = 0}
+                    bins[bin_i][1]++
+                }
+                return bins
+            }
+            
+            var n_picked = 11;
+            var prior_mu = 30;
+            var prior_sd = 15;
+            var simulations = 100000;
+                
+            function sock_sim() {
+                
+                
+                var prior_size = -Math.pow(prior_mu, 2) / (prior_mu - Math.pow(prior_sd, 2));
+                var n_socks = rnbinom(prior_mu, prior_size);
+                
+                var prop_pairs = rbeta(15, 2);
+                var n_pairs = Math.round(Math.floor(n_socks / 2) * prop_pairs);
+                var n_odd = n_socks - n_pairs * 2;
+                
+                //console.log("Pairs",n_pairs);
+                //console.log("Odds",n_odd);
+                
+                var socks = [];
+                var socknr = 1;
+                for (var i=0;i<n_pairs+n_odd;i++) {
+                    socks.push(socknr);
+                    if (i < n_pairs) {socks.push(socknr);}
+                    socknr++;
+                }
+                //console.log(socks);
+                
+                var picked_socks = sample(socks, Math.min(n_picked, n_socks));
+                
+                //console.log(picked_socks);
+                
+                var result = pairsUnique(picked_socks);
+                result.n_socks = n_socks;
+                result.n_pairs = n_pairs;
+                result.n_odd = n_odd;
+                result.prop_pairs = prop_pairs;
+                
+                if (result.unique == 11 && result.pairs == 0) {
+                    var xx = 0;
+                }
+
+                
+                //console.log(result);
+
+                return result;
+            }
+            
+            var samples = [];
+            var post_samples = {n_socks: [], n_pairs: [], n_odd: [], prop_pairs: []};
+            var sim=0;
+            
+            function runSimulation() {
+                nextSimulationStep();
+            }
+            
+            function nextSimulationStep() {
+                if (sim >= simulations) return simulationComplete();
+                sim++;
+                var result = sock_sim();
+                samples.push(result);
+                if (result.unique == 11 && result.pairs == 0) {
+                    console.log("HIT",sim)
+                    post_samples.n_socks.push(result.n_socks);
+                    post_samples.n_pairs.push(result.n_pairs);
+                    post_samples.n_odd.push(result.n_odd);
+                    post_samples.prop_pairs.push(result.prop_pairs);
+                }
+                if (sim%100 == 0) {
+                    plot(post_samples.n_socks,1);
+                    plot(post_samples.prop_pairs,2);
+                    plot(post_samples.n_pairs,3);
+                    plot(post_samples.n_odd,4);
+                    setTimeout(function() {nextSimulationStep()},0);
+                } else {
+                    nextSimulationStep();
+                }
+            }
+            
+            function simulationComplete() {
+                console.log(post_samples)
+                console.log(jStat.median(post_samples.n_socks));
+            }
+            
+            $(document).ready(function() {
+                runSimulation();
+            });
+            
+            function plot(data, id) {
+                var median = jStat.median(data);
+                var bar_data = histogram_counts(data, 30);
+                var bar_width = bar_data[1][0] - bar_data[0][0]
+                
+                var plot_options = {font: {size: 9}, shadowSize: 0, yaxis: {autoscaleMargin:0.66},
+                                    grid: {markings: [{ color: '#FF0000', lineWidth: 4, xaxis: { from: median, to: median } },]
+                                    }}
+
+                $.plot($("#plot"+id), [{data: bar_data, color: "#3333bb", bars: {show: true, align: "center", barWidth: bar_width}}], plot_options);
+            }
+            
+        </script>
+        
+        <style>
+            #plots > div {
+                height: 200px;
+                width: 500px;
+            }
+            .item_title, .item_description { 
+                font-size:14px; line-height:125%; text-align: center;
+            }
+            .plot {
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    
+    <body>
+        <div id="plots">
+            
+            <div>
+                <div class="item_title">Posterior on n_socks</div>
+                <div id="plot1" class="plot"></div>
+                <div class="item_description">Number of socks</div>
+            </div>
+            <br/><br/>
+            <div>
+                <div class="item_title">Posterior on prop_pairs</div>
+                <div id="plot2" class="plot"></div>
+                <div class="item_description">Proportion of socks in pairs</div>
+            </div>
+            <br/><br/>
+            <div>
+                <div class="item_title">Posterior on n_pairs</div>
+                <div id="plot3" class="plot"></div>
+                <div class="item_description">Number of sock pairs</div>
+            </div>
+            <br/><br/>
+            <div>
+                <div class="item_title">Posterior on n_odd</div>
+                <div id="plot4" class="plot"></div>
+                <div class="item_description">Number of odd socks</div>
+            </div>
+        </div>
+        
+    </body>
+    
+</html>
